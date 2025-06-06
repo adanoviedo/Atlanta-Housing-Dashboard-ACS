@@ -1,0 +1,298 @@
+---
+title: "Census Data (ACS): Atlanta Housing"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    runtime: shiny
+---
+
+```{r setup, include=FALSE}
+# Call Packages
+
+library(flexdashboard)
+library(shiny)
+library(tidyverse)
+library(tidycensus)
+library(mapview)
+library(leaflet)
+library(scales)
+library(tigris)
+options(tigris_use_cache = TRUE)
+library(ggbeeswarm)
+library(biscale)
+library(viridis)
+
+```
+
+```{r homevalue}
+# 1. Median home value map #####################################################
+# Pull data
+homevalue <- get_acs(geography = "tract",
+                          variables = "B25077_001",
+                          state = "GA",
+                          county = c(
+                            "Fulton", 
+                            "DeKalb", 
+                            "Cobb",
+                            "Gwinnett", 
+                            "Clayton"
+                            ),
+                          survey = "acs5",
+                          year = 2023,
+                          output = "wide", 
+                          geometry = TRUE) %>% 
+  mutate(Value = ifelse(
+           is.na(B25077_001E),
+           NA,
+           paste0("$", format(B25077_001E, big.mark = ",", scientific = FALSE))
+         ),
+         popup_info = paste0(                                 # Customize popup
+           "<b>Name:</b> ", NAME, "<br>",
+           "<b>Median Home Value:</b> ", dollar(B25077_001E), "<br>",
+           "<b>Margin of Error:</b> ", dollar(B25077_001M)
+           )
+         )
+
+```
+
+```{r bedroomrent, include=FALSE}
+# 3. Median gross rent by bedroom ggbeeswarm plot ##############################
+
+# Define ACS variables for bedrooms
+housing_var <- sprintf("B25031_%03d", 3:7)
+
+# Pull ACS data
+bedroomrent <- get_acs(
+  geography = "tract",
+  variables = housing_var,
+  state = "GA",
+  county = c("Fulton", "DeKalb", "Cobb", "Gwinnett", "Clayton"),
+  survey = "acs5",
+  year = 2023,
+  geometry = TRUE
+) %>%
+  mutate(
+    bedroom_label = recode(variable,
+      "B25031_003" = "1 Bedroom",
+      "B25031_004" = "2 Bedrooms",
+      "B25031_005" = "3 Bedrooms",
+      "B25031_006" = "4 Bedrooms",
+      "B25031_007" = "5+ Bedrooms"
+    ),
+    county = str_extract(NAME, "(?<=;\\s)[^;]+(?=\\sCounty)"),
+    popup_info = paste0(
+      "<b>Tract:</b> ", NAME, "<br>",
+      "<b>Bedrooms:</b> ", bedroom_label, "<br>",
+      "<b>Median Rent:</b> ", dollar(estimate)
+    )
+  )
+
+```
+
+```{r rentcostratio, include=FALSE}
+# 4. Median contract rent and Median monthly costs ratio map ##################
+rentcostratio <- get_acs(geography = "tract",                # Pull data from ACS with Geography
+                          variables = c(rent = "B25058_001", cost = "B25105_001"),
+                          state = "GA",
+                          county = c(
+                            "Fulton", 
+                            "DeKalb", 
+                            "Cobb",
+                            "Gwinnett", 
+                            "Clayton"
+                          ),
+                          survey = "acs5",
+                          year = 2023,
+                          geometry = TRUE,
+                          output = "wide") %>% 
+  mutate(Rent = dollar(rentE, accuracy = 1),                  # Reformat into currency 
+         Cost = dollar(costE, accuracy = 1), 
+         RentRatio = rentE/costE,                             # Calculate ratios and categorize 
+         Affordability = case_when(
+           is.na(RentRatio) ~ NA_character_,
+           RentRatio < 0.8 ~ "Much More Affordable to Rent",
+           RentRatio < 0.98 ~ "More Affordable to Rent",
+           RentRatio <= 1.01 ~ "Balanced",
+           RentRatio <= 1.2 ~ "More Affordable to Own",
+           TRUE ~ "Much More Affordable to Own"),
+         popup_info = paste0(
+  "<b>Name:</b> ", NAME, "<br>",
+  "<b>Affordability:</b> ", Affordability, "<br>",
+  "<b>Median Contract Rent (Dollars):</b> ", Rent, "<br>",
+  "<b>Median Monthly Housing Costs (Dollars):</b> ", Cost)
+  )
+
+# Ensure ordered factor
+rentcostratio$Affordability <- factor(rentcostratio$Affordability, levels = c(
+  "Much More Affordable to Rent",
+  "More Affordable to Rent",
+  "Balanced",
+  "More Affordable to Own",
+  "Much More Affordable to Own"
+))
+
+# Custom Color Palette
+palette <- c(
+  "Much More Affordable to Rent"  = "#d73027",  # Vivid crimson red
+  "More Affordable to Rent"       = "#fc8d59",  # Bold coral-orange
+  "Balanced"           = "#fee08b",  # Bright sunflower yellow
+  "More Affordable to Own"             = "#91cf60",  # Lively lime green
+  "Much More Affordable to Own" = "#1a9850"   # Rich emerald green
+)
+
+```
+
+Housing Value and Cost
+=======================================================================
+
+Sidebar {.sidebar}
+-----------------------------------------------------------------------
+**These interactive visualizations** explore housing costs across several counties in the Atlanta metropolitan area (Fulton, DeKalb, Cobb, Gwinnett, and Clayton County). 
+
+The left map shows the median home value by census tract, offering a spatial perspective on how property values vary throughout the city. Hover overand click any tract to reveal a detailed popup with the tract name and median home value displayed in dollars. Use the map toolbar to zoom in, pan, and explore specific neighborhoods or areas of interest.
+
+The second map addresses the question of whether it’s generally more affordable to rent or own in each tract by comparing median rent to median housing costs for homeowners. Each tract is categorized into "affordability" groups depending on whether rent exceeds ownership costs and by how much. You can interact with this map similarly—hover to view local affordability levels. These tools make it easy to explore affordability patterns and compare different parts of the region.
+
+Row
+-----------------------------------------------------------------------
+
+### Median Home Value
+
+```{r}
+# Generate Map
+renderLeaflet({
+  mapview(
+    homevalue, 
+        zcol = "Value",
+        alpha = 0.4,
+        #lwd = 2,
+        popup = homevalue$popup_info,
+        legend = F
+        )@map
+})
+```
+
+
+
+### Is it More Affordable to Rent or Own?
+```{r}
+# Generate map
+renderLeaflet({
+  mapview(
+  rentcostratio,
+  zcol = "Affordability",
+  col.regions = palette,
+  alpha = 0.6,
+  popup = rentcostratio$popup_info,
+  legend = F
+)@map
+})
+```
+
+Rental by No. Bedrooms
+=======================================================================
+
+Sidebar {.sidebar}
+-----------------------------------------------------------------------
+
+**Explore how rental prices vary** across counties and bedroom sizes in the Atlanta metro area. Use the drop down menu to select a specific bedroom type—such as "2 Bedrooms" or "4 Bedrooms"—and the dashboard will update to show corresponding rent data. 
+
+```{r}
+selectInput("bedroom", "Select Bedroom Type:",
+            choices = unique(bedroomrent$bedroom_label),
+            selected = "1 Bedroom")
+```
+
+The interactive first map displays median rent by census tract, with darker colors indicating higher rent values. Hover over any tract to view its detailed popup with the name and rent in dollar format. Use the map toolbar to zoom, pan, or change the background layer to satellite or topographic views.
+
+Below the map, you'll find two supporting charts. The boxplot compares rental distributions across counties for the selected bedroom type, showing the spread and outliers within each county. The strip plot at the bottom provides a full view of rent variation by bedroom count across all tracts, using a quasirandom layout to avoid overplotting. These visualizations help illustrate both geographic and structural patterns in rental affordability, aiding in quick comparison across neighborhoods and housing types.
+
+Row
+-----------------------------------------------------------------------
+
+### What is the Median Rent by Number of Bedrooms?
+```{r}
+renderLeaflet({
+  bedroomrent_map <- bedroomrent %>% 
+    filter(bedroom_label == input$bedroom)
+  
+  mapview(
+    bedroomrent_map,
+    zcol = "estimate",
+    col.regions = viridis::viridis(20),
+    alpha.regions = 0.7,
+    popup = bedroomrent_map$popup_info,
+    layer.name = input$bedroom,
+    legend = F
+  )@map
+})
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Median Gross Rent by County
+```{r}
+renderPlot({
+  bedroomrent_box <- bedroomrent %>% 
+    filter(bedroom_label == input$bedroom)
+  
+  bedroomrent_box %>%
+    ggplot(aes(x = county, y = estimate)) +
+    geom_boxplot(outlier.color = "gray40", outlier.alpha = 0.6) +
+    scale_y_continuous(labels = dollar_format()) +
+    labs(
+      title = input$bedroom,
+      x = "County", y = "Gross Median Rent"
+    ) +
+    theme_minimal() +
+    theme(legend.position = "none")
+})
+
+```
+
+### Median Gross Rent by Number of Bedrooms
+```{r}
+ggplot(bedroomrent, aes(x = bedroom_label, y = estimate, color = estimate)) +
+  geom_quasirandom(alpha = 0.5) + 
+  coord_flip() + 
+  theme_minimal(base_size = 13) + 
+  scale_color_viridis_c(guide = "none") + 
+  scale_y_continuous(labels = label_dollar()) + 
+  labs(x = "Number of Bedrooms", 
+       y = "Median Gross Rent")
+```
+
+About
+=======================================================================
+
+**About the American Community Survey**
+
+This dashboard uses data from the American Community Survey (ACS), a nationwide survey conducted by the U.S. Census Bureau. The ACS provides annual estimates on population demographics, housing, education, employment, and more — helping planners, policymakers, and researchers understand local conditions. The data presented here are from the ACS 5-Year Estimates for 2023, which provide more stable estimates at smaller geographic levels such as census tracts.
+
+To access ACS data in R, we use the tidycensus package, which connects directly to the U.S. Census Bureau’s API. To use it yourself, you'll need to request a free API key from the Census Bureau's API page, then store it with census_api_key("YOUR_KEY_HERE", install = TRUE) to enable repeated access in your R sessions.
+
+**Meta Data**
+
+This dashboard pulls the following ACS variables:
+
+B25077_001: Median home value (owner-occupied units).
+
+B25031_003 to B25031_007: Median gross rent by number of bedrooms (1 to 5+).
+
+B25058_001: Median contract rent (typically renter’s monthly cash rent excluding utilities).
+
+B25105_001: Median monthly owner costs (including mortgage, insurance, taxes, etc.).
+
+
+**Disclaimer**
+
+This dashboard is intended for educational and demonstration purposes only. While the data are real and sourced from the U.S. Census Bureau, they are presented without adjustment or deeper contextual analysis. Visualizations are exploratory tools and should not be used for official decision-making, policy development, or investment purposes. Users should consult the original ACS documentation and conduct appropriate methodological review before drawing conclusions from the data.
+
+```{js}
+<script>
+$("body").on("shown.bs.tab", "a[data-toggle='tab']", function(e) {
+   Shiny.setInputValue("active_tab", $(e.target).parent().index());
+})
+</script>
+```
