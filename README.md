@@ -2,6 +2,8 @@
 
 This project is a **Shiny-powered interactive dashboard** built with `flexdashboard` that visualizes housing-related data from the **American Community Survey (ACS) 5-Year Estimates (2023)** for the **Atlanta metropolitan area**. It allows users to explore **housing affordability** and **rental trends** across key counties: **Fulton, DeKalb, Cobb, Gwinnett, and Clayton**.
 
+![Dashboard_Rental](https://github.com/user-attachments/assets/dd16d871-b092-4b26-a2cf-125494e059bb)
+
 ## ⚠️ Disclaimer
 
 This dashboard is intended for **educational and demonstration purposes** only. While data is pulled directly from the U.S. Census Bureau, no modeling or contextual interpretation has been performed. Do not use for drawing conclusions for policy, investment, or planning purposes.
